@@ -1,5 +1,6 @@
 import express from "express";
 import dotenv from "dotenv";
+import { connectDB } from "./db.js";
 
 dotenv.config();
 
@@ -8,11 +9,14 @@ app.use(express.json());
 
 const PORT = 3000;
 
-/* Health check API */
+/* Health check */
 app.get("/", (req, res) => {
   res.send("HR Knowledge Copilot Backend is running");
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+/* Start server after DB connection */
+connectDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
 });
