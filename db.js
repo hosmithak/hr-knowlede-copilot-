@@ -1,7 +1,7 @@
-import { MongoClient } from "mongodb";
 import dotenv from "dotenv";
-
 dotenv.config();
+
+import { MongoClient } from "mongodb";
 
 const uri = process.env.MONGO_URI;
 
@@ -10,6 +10,7 @@ if (!uri) {
   process.exit(1);
 }
 
+console.log("MONGO_URI CHECK:", process.env.MONGO_URI);
 const client = new MongoClient(uri);
 
 export async function connectDB() {

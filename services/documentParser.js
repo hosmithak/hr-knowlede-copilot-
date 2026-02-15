@@ -5,9 +5,9 @@ import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
 
-export async function extractText(filePath) {
+export async function extractText(filePath, originalName) {
   try {
-    const extension = filePath.split(".").pop().toLowerCase();
+    const extension = originalName.split(".").pop().toLowerCase();
 
     // -------- PDF --------
     if (extension === "pdf") {
