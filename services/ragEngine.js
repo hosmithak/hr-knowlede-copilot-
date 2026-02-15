@@ -1,45 +1,92 @@
-import OpenAI from "openai";
-import { getEmbedding } from "./embeddingService.js";
-import { findRelevantChunks } from "./vectorSearch.js";
+// import { pipeline } from "@xenova/transformers";
 
-function getClient() {
-  return new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY
-  });
-}
+// let generator;
 
-export async function generateAnswer(question, documents) {
-  const questionEmbedding = await getEmbedding(question);
+// async function loadGenerator() {
+//   if (!generator) {
+//     generator = await pipeline(
+//       "text2text-generation",
+//       "Xenova/flan-t5-base"
+//     );
+//   }
+//   return generator;
+// }
 
-  const relevantChunks = await findRelevantChunks(
-    questionEmbedding,
-    documents
-  );
+// export async function generateAnswer(prompt) {
+//   const model = await loadGenerator();
 
-  if (relevantChunks.length === 0) {
-    return "I could not find relevant information in HR policies.";
-  }
+//   const result = await model(prompt, {
+//     max_new_tokens: 200,
+//   });
 
-  const context = relevantChunks
-    .map(d => `Source (${d.source}): ${d.content}`)
-    .join("\n");
+//   return result[0].generated_text;
+// }
 
-  const client = getClient();
-  const completion = await client.chat.completions.create({
+// import fetch from "node-fetch";
 
-    model: "gpt-4o-mini",
-    messages: [
-      {
-        role: "system",
-        content:
-          "Answer only using the provided HR policy context. If not found, say you don't know."
+// const HF_API_TOKEN = process.env.HF_API_KEY;
+// // const LLM_MODEL = "google/flan-t5-large";
+// const LLM_MODEL = "google/flan-t5-base"; 
+
+
+// export async function generateAnswer(prompt) {
+//   try {
+//     const response = await fetch(`https://api-inference.huggingface.co/models/${LLM_MODEL}`, {
+//       method: "POST",
+//       headers: {
+//         Authorization: `Bearer ${HF_API_TOKEN}`,
+//         "Content-Type": "application/json",
+//       },
+//       body: JSON.stringify({
+//         inputs: prompt,
+//         parameters: { max_new_tokens: 200 },
+//       }),
+//     });
+
+//     if (!response.ok) throw new Error(`HF API error: ${response.statusText}`);
+
+//     const result = await response.json();
+//     return Array.isArray(result) && result[0].generated_text
+//       ? result[0].generated_text
+//       : "❌ Failed to generate answer";
+//   } catch (err) {
+//     console.error("Answer generation failed:", err.message);
+//     throw err;
+//   }
+// }
+
+import fetch from "node-fetch";
+
+const HF_API_TOKEN = process.env.HF_API_KEY;
+// const LLM_MODEL = "google/flan-t5-small"; // lightweight, fast
+const LLM_MODEL = "google/flan-t5-small";
+
+
+export async function generateAnswer(prompt) {
+  try {
+    const response = await fetch(`https://api-inference.huggingface.co/models/${LLM_MODEL}`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${HF_API_TOKEN}`,
+        "Content-Type": "application/json",
       },
-      {
-        role: "user",
-        content: `Context:\n${context}\n\nQuestion:\n${question}`
-      }
-    ]
-  });
+      body: JSON.stringify({
+        inputs: prompt,
+        parameters: { max_new_tokens: 150 },
+      }),
+    });
 
-  return completion.choices[0].message.content;
+    if (!response.ok) throw new Error(`HF API error: ${response.statusText}`);
+
+    const result = await response.json();
+    return Array.isArray(result) && result[0].generated_text
+      ? result[0].generated_text
+      : "❌ Failed to generate answer";
+  } catch (err) {
+    console.error("Answer generation failed:", err.message);
+    throw err;
+  }
 }
+
+
+
