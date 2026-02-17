@@ -1,91 +1,108 @@
+import express from "express";
+import cors from "cors";
 import dotenv from "dotenv";
+import multer from "multer";
+import fs from "fs";
+
+import { connectDB } from "./db.js";
+import { parsePdfWithLlama } from "./services/documentParser.js";
+import { chunkText } from "./services/chunker.js";
+import { generateEmbedding } from "./services/embeddingService.js";
+import { generateAnswer } from "./services/ragEngine.js";
+import { findRelevantChunks } from "./services/vectorSearch.js";
+
 dotenv.config();
 
-import express from "express";
-import multer from "multer";
-import { connectDB } from "./db.js";
-import { extractText } from "./services/documentParser.js";
-import { generateAnswer } from "./services/ragEngine.js";
-import { getEmbedding } from "./services/embeddingService.js";
-import { cosineSimilarity } from "./services/similarity.js";
-
 const app = express();
+const PORT = process.env.PORT || 5000;
+
+app.use(cors());
 app.use(express.json());
 
+// Storage config for multer
 const upload = multer({ dest: "uploads/" });
-const PORT = process.env.PORT || 3000;
 
-const db = await connectDB();
-
+// Health route
 app.get("/", (req, res) => {
-  res.send("HR Knowledge Copilot Backend is running");
+  res.send("HR Copilot Backend Running 🚀");
 });
 
-app.get("/test-db", async (req, res) => {
+
+// ==============================
+// 1️⃣ Upload & Index PDF
+// ==============================
+app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    await db.collection("test").insertOne({
-      message: "Mongo is working",
-      createdAt: new Date(),
-    });
-    res.send("✅ Inserted into DB successfully");
+    if (!req.file) {
+      return res.status(400).json({ message: "No file uploaded" });
+    }
+
+    const db = await connectDB();
+    const collection = db.collection("documents");
+
+    // Parse PDF
+    const fullText = await parsePdfWithLlama(req.file.path);
+
+    // Chunk text
+    const chunks = chunkText(fullText);
+
+    // Generate embeddings and store
+    for (const chunk of chunks) {
+      const embedding = await generateEmbedding(chunk);
+
+      await collection.insertOne({
+        content: chunk,
+        embedding: embedding,
+      });
+    }
+
+    res.json({ message: "Document uploaded and indexed successfully" });
+
   } catch (error) {
-    console.error(error);
-    res.status(500).send("❌ DB Insert failed");
+    console.error(error.message);
+    res.status(500).json({ message: "Upload failed" });
   }
 });
 
-app.post("/admin/upload-policy", upload.single("document"), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const extractedText = await extractText(req.file.path, req.file.originalname);
-    console.log("Extracted text:", extractedText.slice(0, 200));
-
-    const embedding = await getEmbedding(extractedText);
-    console.log("Embedding length:", embedding.length);
-
-    await db.collection("documents").insertOne({
-      filename: req.file.originalname,
-      content: extractedText,
-      embedding,
-      uploadedAt: new Date(),
-      type: "HR_POLICY",
-    });
-
-    res.json({ message: "Policy document uploaded and indexed successfully" });
-  } catch (err) {
-    console.error("Upload failed:", err);
-    res.status(500).json({ error: "Document processing failed" });
-  }
-});
-
-app.post("/user/ask", async (req, res) => {
+// ==============================
+// 2️⃣ Ask Question
+// ==============================
+app.post("/ask", async (req, res) => {
   try {
     const { question } = req.body;
-    if (!question) return res.status(400).json({ error: "Question is required" });
 
-    const questionEmbedding = await getEmbedding(question);
+    if (!question) {
+      return res.status(400).json({ message: "Question is required" });
+    }
 
-    const documents = await db.collection("documents").find({ type: "HR_POLICY" }).toArray();
-    if (documents.length === 0)
-      return res.json({ question, answer: "No HR policy documents found." });
+    // Generate embedding for question
+    const questionEmbedding = await generateEmbedding(question);
 
-    const rankedDocs = documents
-      .map((doc) => ({
-        ...doc,
-        score: cosineSimilarity(questionEmbedding, doc.embedding),
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 3);
+    // Find relevant chunks
+    const relevantDocs = await findRelevantChunks(questionEmbedding);
 
-    const context = rankedDocs.map((d) => d.content).join("\n");
-    const answer = await generateAnswer(`Context: ${context}\nQuestion: ${question}`);
+    const context = relevantDocs
+      .map(doc => doc.content)
+      .join("\n\n");
 
-    res.json({ question, answer });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Failed to answer question" });
+    // Generate final answer
+    const answer = await generateAnswer(context, question);
+
+    res.json({ answer });
+
+  } catch (error) {
+    console.error(error.message);
+    res.status(500).json({ message: "Failed to generate answer" });
   }
 });
 
-app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
+// ==============================
+// Start Server
+// ==============================
+connectDB().then(() => {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+  });
+});
