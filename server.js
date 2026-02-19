@@ -1,74 +1,89 @@
+import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import dotenv from "dotenv";
 import multer from "multer";
 import fs from "fs";
-
-import { connectDB } from "./db.js";
-import { parsePdfWithLlama } from "./services/documentParser.js";
+import { parseDocument } from "./services/documentParser.js";
 import { chunkText } from "./services/chunker.js";
 import { generateEmbedding } from "./services/embeddingService.js";
-import { generateAnswer } from "./services/ragEngine.js";
 import { findRelevantChunks } from "./services/vectorSearch.js";
-
-dotenv.config();
+import { generateAnswer } from "./services/ragEngine.js";
+import { connectDB } from "./db.js";
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const upload = multer({ dest: "uploads/" });
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 
-// Storage config for multer
-const upload = multer({ dest: "uploads/" });
-
-// Health route
 app.get("/", (req, res) => {
-  res.send("HR Copilot Backend Running 🚀");
+  res.send("HR Copilot backend is running with Tika!");
 });
 
-
-// ==============================
-// 1️⃣ Upload & Index PDF
-// ==============================
+// ✅ Upload → Tika → Chunk → Embed → Store
 app.post("/upload", upload.single("file"), async (req, res) => {
+  let filePath = req.file?.path;
+
   try {
-    if (!req.file) {
+    if (!filePath) {
       return res.status(400).json({ message: "No file uploaded" });
     }
 
+    // 1️⃣ Extract full content using Tika
+    const fullText = await parseDocument(filePath);
+
+    if (!fullText || fullText.trim().length === 0) {
+      throw new Error("No content extracted from document");
+    }
+
+    // 2️⃣ Chunk text
+    const chunks = chunkText(fullText);
+
+    // 3️⃣ Generate embeddings
+    const chunksWithEmbeddings = [];
+    for (const chunk of chunks) {
+      const embedding = await generateEmbedding(chunk);
+      chunksWithEmbeddings.push({ chunk, embedding });
+    }
+
+    // 4️⃣ Store in MongoDB
     const db = await connectDB();
     const collection = db.collection("documents");
 
-    // Parse PDF
-    const fullText = await parsePdfWithLlama(req.file.path);
+    const docs = chunksWithEmbeddings.map(item => ({
+      filename: req.file.originalname,
+      content: item.chunk,
+      embedding: item.embedding,
+      uploadedAt: new Date(),
+    }));
 
-    // Chunk text
-    const chunks = chunkText(fullText);
-
-    // Generate embeddings and store
-    for (const chunk of chunks) {
-      const embedding = await generateEmbedding(chunk);
-
-      await collection.insertOne({
-        content: chunk,
-        embedding: embedding,
-      });
+    if (docs.length > 0) {
+      await collection.insertMany(docs);
     }
 
-    res.json({ message: "Document uploaded and indexed successfully" });
+    res.json({
+      message: "Document uploaded and processed successfully",
+      chunksStored: docs.length,
+    });
 
-  } catch (error) {
-    console.error(error.message);
-    res.status(500).json({ message: "Upload failed" });
+  } catch (err) {
+    console.error("Upload Error:", err);
+    res.status(500).json({ message: err.message });
+  } finally {
+    // cleanup file
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (cleanupErr) {
+        console.error("File cleanup failed:", cleanupErr.message);
+      }
+    }
   }
 });
 
-
-// ==============================
-// 2️⃣ Ask Question
-// ==============================
-app.post("/ask", async (req, res) => {
+// ✅ Query route unchanged
+app.post("/query", async (req, res) => {
   try {
     const { question } = req.body;
 
@@ -76,33 +91,20 @@ app.post("/ask", async (req, res) => {
       return res.status(400).json({ message: "Question is required" });
     }
 
-    // Generate embedding for question
     const questionEmbedding = await generateEmbedding(question);
 
-    // Find relevant chunks
-    const relevantDocs = await findRelevantChunks(questionEmbedding);
+    const topChunks = await findRelevantChunks(questionEmbedding, 3);
 
-    const context = relevantDocs
-      .map(doc => doc.content)
-      .join("\n\n");
+    const context = topChunks.map(c => c.content).join("\n\n");
 
-    // Generate final answer
     const answer = await generateAnswer(context, question);
 
     res.json({ answer });
 
-  } catch (error) {
-    console.error(error.message);
-    res.status(500).json({ message: "Failed to generate answer" });
+  } catch (err) {
+    console.error("Query Error:", err);
+    res.status(500).json({ message: err.message });
   }
 });
 
-
-// ==============================
-// Start Server
-// ==============================
-connectDB().then(() => {
-  app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
-  });
-});
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

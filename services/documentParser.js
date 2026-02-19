@@ -1,76 +1,42 @@
-// services/documentParser.js
-
 import axios from "axios";
 import fs from "fs";
-import FormData from "form-data";
 
-const LLAMA_PARSE_API = "https://api.llamaindex.ai/api/parsing/upload";
+const TIKA_URL = "http://localhost:9998/tika";
 
-export async function parsePdfWithLlama(filePath) {
+export async function parseDocument(filePath) {
   try {
-    const formData = new FormData();
-    formData.append("file", fs.createReadStream(filePath));
+    const fileStream = fs.createReadStream(filePath);
 
-    const response = await axios.post(
-      LLAMA_PARSE_API,
-      formData,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.LLAMA_PARSE_API_KEY}`,
-          ...formData.getHeaders(),
-        },
-      }
-    );
+    const response = await axios({
+      method: "put",
+      url: TIKA_URL,
+      data: fileStream,
+      headers: {
+        "Content-Type": "application/octet-stream",
+      },
+      responseType: "stream", // 🔥 IMPORTANT
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    });
 
-    const parsedData = response.data;
+    return new Promise((resolve, reject) => {
+      let extractedText = "";
 
-    // ✅ Null safety check
-    if (!parsedData?.documents) {
-      throw new Error("Invalid LlamaParse response");
-    }
+      response.data.on("data", chunk => {
+        extractedText += chunk.toString();
+      });
 
-    let fullText = "";
+      response.data.on("end", () => {
+        resolve(extractedText);
+      });
 
-    parsedData.documents.forEach((doc) => {
-      doc.blocks?.forEach((block) => {
-        if (block.type === "text" && block.text) {
-          fullText += block.text + "\n\n";
-        }
-
-        if (block.type === "table" && block.table) {
-          fullText += formatTable(block.table) + "\n\n";
-        }
+      response.data.on("error", err => {
+        reject(err);
       });
     });
 
-    return fullText;
-
   } catch (error) {
-    console.error("LlamaParse Error:", error.response?.data || error.message);
-    throw new Error("PDF parsing failed");
-  } finally {
-    // ✅ Always delete uploaded file (even if parsing fails)
-    try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-      }
-    } catch (cleanupError) {
-      console.error("File cleanup failed:", cleanupError.message);
-    }
+    console.error("Tika parsing error:", error.message);
+    throw new Error("Failed to parse document using Tika");
   }
-}
-
-// Convert table into embedding-friendly text
-function formatTable(table) {
-  let formatted = "Table Data:\n";
-
-  table.rows?.forEach((row) => {
-    const rowText = row.cells
-      ?.map((cell) => cell.text?.trim() || "")
-      .join(" | ");
-
-    formatted += rowText + "\n";
-  });
-
-  return formatted;
 }

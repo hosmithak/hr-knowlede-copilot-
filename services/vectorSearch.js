@@ -15,10 +15,10 @@
 //     .slice(0, topK);
 // }
 
+// services/vectorSearch.js
 import { MongoClient } from "mongodb";
 
 const client = new MongoClient(process.env.MONGO_URI);
-
 let collection;
 
 async function connectDB() {
@@ -36,20 +36,16 @@ export async function findRelevantChunks(questionEmbedding, topK = 3) {
   const results = await collection.aggregate([
     {
       $vectorSearch: {
-        index: "vector_index", // your Atlas index name
+        index: "vector_index",
         path: "embedding",
         queryVector: questionEmbedding,
         numCandidates: 100,
         limit: topK
       }
     },
-    {
-      $project: {
-        content: 1,
-        score: { $meta: "vectorSearchScore" }
-      }
-    }
+    { $project: { content: 1, score: { $meta: "vectorSearchScore" } } }
   ]).toArray();
 
   return results;
 }
+

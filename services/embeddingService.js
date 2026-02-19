@@ -1,25 +1,28 @@
-import OpenAI from "openai";
+import { pipeline } from "@xenova/transformers";
 
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+let extractor;
+
+// Load model once
+async function loadModel() {
+  if (!extractor) {
+    extractor = await pipeline(
+      "feature-extraction",
+      "Xenova/all-MiniLM-L6-v2"
+    );
+  }
+}
 
 export async function generateEmbedding(text) {
-  // ✅ Production safety check
-  if (!text || typeof text !== "string" || text.trim().length === 0) {
+  if (!text || !text.trim()) {
     throw new Error("Cannot embed empty text");
   }
 
-  try {
-    const response = await openai.embeddings.create({
-      model: "text-embedding-3-small",
-      input: text,
-    });
+  await loadModel();
 
-    return response.data[0].embedding;
+  const output = await extractor(text, {
+    pooling: "mean",
+    normalize: true,
+  });
 
-  } catch (error) {
-    console.error("Embedding Error:", error.message);
-    throw error;
-  }
+  return Array.from(output.data);
 }

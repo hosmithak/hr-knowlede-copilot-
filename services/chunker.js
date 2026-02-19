@@ -1,35 +1,26 @@
-
 export function chunkText(text, chunkSize = 800, overlap = 150) {
-  // ✅ Safety check (production-ready guard)
-  if (!text || typeof text !== "string") {
-    return [];
-  }
+  if (!text || typeof text !== "string") return [];
+
+  text = text.replace(/\s+/g, " ").trim();
 
   const chunks = [];
   let start = 0;
 
-  // Normalize whitespace
-  text = text.replace(/\s+/g, " ").trim();
-
   while (start < text.length) {
     let end = start + chunkSize;
 
-    // Prevent cutting in middle of sentence
-    if (end < text.length) {
-      const lastPeriod = text.lastIndexOf(".", end);
-      if (lastPeriod > start) {
-        end = lastPeriod + 1;
-      }
+    if (end >= text.length) {
+      chunks.push(text.slice(start).trim());
+      break;
     }
 
     const chunk = text.slice(start, end).trim();
     chunks.push(chunk);
 
-    // Apply overlap
-    start = end - overlap;
+    // 🔥 GUARANTEE forward movement
+    start = start + (chunkSize - overlap);
 
-    // Prevent infinite loop edge case
-    if (start < 0) start = 0;
+    if (start <= 0 || start >= text.length) break;
   }
 
   return chunks;
